@@ -1,0 +1,13 @@
+{
+    "SEED": 33,
+    "NUM_TASKS": 5,
+    "EPOCHS_PER_TASK": 5,
+    "EXPERIMENT_TYPE": "SplitMNIST",
+    "FIXED_HEAD_PER_TASK": true,
+    "Z_DIVERGENCE_THRESHOLD": 2.0,
+    "DEVICE": "cuda",
+    "X_DIM": 784,
+    "Y_DIM_ONEHOT": 10,
+    "Y_DIM_OUT": 10,
+    "NUM_CL_TASKS_EFFECTIVE": 5
+}
