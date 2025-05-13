@@ -1,26 +1,68 @@
 #!/bin/bash
 
-# Script to run OGP-NP continual learning experiments
+# Script to run OGP-NP continual learning experiments with varying epochs,
+# fixed heads, specific seeds, and push results to Git.
+# Assumes the Python script also includes epochs in the created results folder name.
 
 # --- Configuration ---
-PYTHON_SCRIPT_NAME="save_res.py" # Make sure this matches your Python script filename
-BASE_EPOCHS_PER_TASK=5
+PYTHON_SCRIPT_NAME="ogp_np_cl.py" # Make sure this matches your Python script filename
+GIT_REMOTE_NAME="origin" # Change if your remote is named differently
+GIT_BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD) # Get current branch name
 
-# Seeds to run
-SEEDS=(11 22 33 44 55 66 77 88 99 1010) # 10 different seeds
+# Seeds to run (5 different seeds)
+SEEDS=(0 1 2 3 4)
 
 # Experiment types
 EXPERIMENT_TYPES=("PermutedMNIST" "SplitMNIST" "RotatedMNIST")
 
-# Z-Divergence Thresholds for dynamic head allocation
-# For FixedHead mode, this list is not used, but we run it once with --fixed_head_per_task
-DIVERGENCE_THRESHOLDS=(0.1 0.2 0.5 1.0)
+# Epochs per task values to iterate over
+EPOCHS_PER_TASK_VALUES=(10 20 50)
 
 # --- Check if Python script exists ---
 if [ ! -f "$PYTHON_SCRIPT_NAME" ]; then
     echo "Error: Python script '$PYTHON_SCRIPT_NAME' not found!"
     exit 1
 fi
+
+# --- Function to perform Git operations ---
+perform_git_operations() {
+    local results_dir_pattern="$1" # This pattern now includes epochs
+    local commit_message="$2"
+
+    local found_dir
+    # Find the most recently created directory matching the full pattern (including epochs)
+    # The Python script appends a timestamp, so we use '*' at the end.
+    found_dir=$(find . -maxdepth 1 -type d -name "${results_dir_pattern}*" -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)
+    
+    if [ -z "$found_dir" ] || [ ! -d "$found_dir" ]; then
+        echo "Error: Could not find results directory matching pattern '$results_dir_pattern'."
+        echo "Looked for: ${results_dir_pattern}*"
+        echo "Skipping Git operations for this run."
+        return
+    fi
+    
+    RESULTS_DIR_TO_ADD=$(basename "$found_dir")
+
+    echo "Found results directory: $RESULTS_DIR_TO_ADD"
+
+    echo "Adding results to Git..."
+    git add "$RESULTS_DIR_TO_ADD"
+    
+    echo "Committing results..."
+    git commit -m "$commit_message"
+    
+    echo "Pushing to remote '$GIT_REMOTE_NAME' branch '$GIT_BRANCH_NAME'..."
+    git push "$GIT_REMOTE_NAME" "$GIT_BRANCH_NAME"
+    
+    if [ $? -eq 0 ]; then
+        echo "Git push successful."
+    else
+        echo "Error: Git push failed."
+        # Consider adding 'exit 1' here if a failed push should stop all experiments
+    fi
+    sleep 2 # Small delay
+}
+
 
 # --- Main Experiment Loop ---
 for EXP_TYPE in "${EXPERIMENT_TYPES[@]}"; do
@@ -29,58 +71,52 @@ for EXP_TYPE in "${EXPERIMENT_TYPES[@]}"; do
     echo "================================================================="
 
     NUM_CL_TASKS=0
-    # Determine number of tasks based on experiment type
-    # (Matches logic in your Python script's prepare_task_data and Config)
     if [ "$EXP_TYPE" == "PermutedMNIST" ]; then
-        NUM_CL_TASKS=10 # As per your request
+        NUM_CL_TASKS=10
     elif [ "$EXP_TYPE" == "SplitMNIST" ]; then
-        # classes_per_split is fixed to 2 in your Python Config
-        # So, 10 classes / 2 classes_per_split = 5 tasks
-        NUM_CL_TASKS=5
+        NUM_CL_TASKS=5 # Based on fixed 2 classes per split in Python Config
     elif [ "$EXP_TYPE" == "RotatedMNIST" ]; then
-        NUM_CL_TASKS=10 # As per your request
+        NUM_CL_TASKS=10
     else
         echo "Unknown experiment type: $EXP_TYPE. Skipping."
         continue
     fi
-
     echo "Derived number of tasks for $EXP_TYPE: $NUM_CL_TASKS"
 
-    for SEED in "${SEEDS[@]}"; do
+    for EPOCHS_CURRENT_RUN in "${EPOCHS_PER_TASK_VALUES[@]}"; do
         echo "-----------------------------------------------------"
-        echo "Running for Seed: $SEED"
+        echo "Running with Epochs Per Task: $EPOCHS_CURRENT_RUN"
         echo "-----------------------------------------------------"
 
-        # --- Run 1: Fixed Head Per Task ---
-        echo "Running $EXP_TYPE with Fixed Head Per Task (Seed: $SEED, Tasks: $NUM_CL_TASKS, Epochs: $BASE_EPOCHS_PER_TASK)"
-        python "$PYTHON_SCRIPT_NAME" \
-            --experiment_type "$EXP_TYPE" \
-            --num_tasks "$NUM_CL_TASKS" \
-            --epochs_per_task "$BASE_EPOCHS_PER_TASK" \
-            --seed "$SEED" \
-            --fixed_head_per_task
-        
-        echo "Fixed Head Per Task run finished for Seed $SEED."
-        echo "----------------------------------------"
+        for SEED in "${SEEDS[@]}"; do
+            echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            echo "Running for Seed: $SEED"
+            echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
 
-
-        # --- Run 2 onwards: Dynamic Head Allocation with different thresholds ---
-        for Z_THRESH in "${DIVERGENCE_THRESHOLDS[@]}"; do
-            echo "Running $EXP_TYPE with Dynamic Heads (Seed: $SEED, Tasks: $NUM_CL_TASKS, Epochs: $BASE_EPOCHS_PER_TASK, Z-Div-Thresh: $Z_THRESH)"
-            # Note: --fixed_head_per_task is NOT passed here, so it defaults to False (dynamic)
+            # --- Run: Fixed Head Per Task ---
+            MODE_STR="FixedHead" # Only this mode now
+            echo "Running $EXP_TYPE with $MODE_STR (Seed: $SEED, Tasks: $NUM_CL_TASKS, Epochs: $EPOCHS_CURRENT_RUN)"
+            
             python "$PYTHON_SCRIPT_NAME" \
                 --experiment_type "$EXP_TYPE" \
                 --num_tasks "$NUM_CL_TASKS" \
-                --epochs_per_task "$BASE_EPOCHS_PER_TASK" \
+                --epochs_per_task "$EPOCHS_CURRENT_RUN" \
                 --seed "$SEED" \
-                --z_divergence_threshold "$Z_THRESH"
+                --fixed_head_per_task 
             
-            echo "Dynamic Head (Z-Div-Thresh: $Z_THRESH) run finished for Seed $SEED."
+            echo "$MODE_STR run finished for Seed $SEED, Epochs $EPOCHS_CURRENT_RUN."
+            
+            COMMIT_MSG="Results: $EXP_TYPE $MODE_STR, $NUM_CL_TASKS tasks, $EPOCHS_CURRENT_RUN EPT, Seed $SEED"
+            
+            # *** MODIFIED RESULTS_PATTERN to include epochs ***
+            RESULTS_PATTERN="results_OGP-NP_${EXP_TYPE}_${MODE_STR}_${NUM_CL_TASKS}tasks_seed${SEED}_${EPOCHS_CURRENT_RUN}epochs"
+            
+            perform_git_operations "$RESULTS_PATTERN" "$COMMIT_MSG"
             echo "----------------------------------------"
-        done
-    done
+        done # End SEED loop
+    done # End EPOCHS_CURRENT_RUN loop
     echo "Finished all runs for Experiment Type: $EXP_TYPE"
-done
+done # End EXP_TYPE loop
 
 echo "================================================================="
 echo "All experiments completed."
