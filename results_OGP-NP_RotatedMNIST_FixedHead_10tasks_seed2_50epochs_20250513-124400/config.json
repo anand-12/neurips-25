@@ -1,0 +1,13 @@
+{
+    "SEED": 2,
+    "NUM_TASKS": 10,
+    "EPOCHS_PER_TASK": 50,
+    "EXPERIMENT_TYPE": "RotatedMNIST",
+    "FIXED_HEAD_PER_TASK": true,
+    "Z_DIVERGENCE_THRESHOLD": 2.0,
+    "DEVICE": "cuda",
+    "X_DIM": 784,
+    "Y_DIM_ONEHOT": 10,
+    "Y_DIM_OUT": 10,
+    "NUM_CL_TASKS_EFFECTIVE": 10
+}
