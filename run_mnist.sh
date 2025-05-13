@@ -1,123 +1,145 @@
 #!/bin/bash
 
-# Script to run OGP-NP continual learning experiments with varying epochs,
-# fixed heads, specific seeds, and push results to Git.
-# Assumes the Python script also includes epochs in the created results folder name.
-
 # --- Configuration ---
-PYTHON_SCRIPT_NAME="ogp_np_cl.py" # Make sure this matches your Python script filename
-GIT_REMOTE_NAME="origin" # Change if your remote is named differently
-GIT_BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD) # Get current branch name
+PYTHON_SCRIPT_NAME="ogp_mnist.py" # Name of your Python script
+DEFAULT_NUM_TASKS=10                      # Number of tasks for Permuted/Rotated MNIST
 
-# Seeds to run (5 different seeds)
-SEEDS=(0 1 2 3 4)
+# --- Git Configuration ---
+GIT_PUSH_ENABLED=true                     # Set to true to enable pushing to GitHub, false to disable
+GIT_REMOTE_NAME="origin"                  # Your Git remote name
+GIT_BRANCH_NAME="main"                    # The branch to push to
 
-# Experiment types
-EXPERIMENT_TYPES=("PermutedMNIST" "SplitMNIST" "RotatedMNIST")
+# --- Experiment Parameters ---
+EXPERIMENT_TYPES=("PermutedMNIST" "RotatedMNIST")
+SEEDS=(100 101 102)
+EPOCHS_PER_TASK_OPTIONS=(10 50)
+THRESHOLDS_FOR_DYNAMIC=(0.01 0.005 0.001) # For dynamic head allocation
 
-# Epochs per task values to iterate over
-EPOCHS_PER_TASK_VALUES=(10 20 50)
+# --- Helper Function to Construct Results Directory Name ---
+# This function should mirror the logic in your Python script's __main__ block
+construct_results_dir_name() {
+    local exp_type=$1
+    local seed_val=$2
+    local epochs_val=$3
+    local fixed_head_mode=$4 # "FixedHead" or "DynamicHead"
+    local threshold_val=$5   # Only used if fixed_head_mode is "DynamicHead"
 
-# --- Check if Python script exists ---
-if [ ! -f "$PYTHON_SCRIPT_NAME" ]; then
-    echo "Error: Python script '$PYTHON_SCRIPT_NAME' not found!"
-    exit 1
-fi
+    if [ "$fixed_head_mode" == "FixedHead" ]; then
+        echo "${exp_type}_seed${seed_val}_FixedHead_${epochs_val}epochs"
+    else
+        # Ensure threshold_val is passed correctly for dynamic mode
+        echo "${exp_type}_seed${seed_val}_DynamicHead_${epochs_val}epochs_thresh${threshold_val}"
+    fi
+}
 
-# --- Function to perform Git operations ---
-perform_git_operations() {
-    local results_dir_pattern="$1" # This pattern now includes epochs
-    local commit_message="$2"
+# --- Helper Function to Push Results to GitHub ---
+push_results_to_github() {
+    local results_dir=$1
+    local commit_message=$2
 
-    local found_dir
-    # Find the most recently created directory matching the full pattern (including epochs)
-    # The Python script appends a timestamp, so we use '*' at the end.
-    found_dir=$(find . -maxdepth 1 -type d -name "${results_dir_pattern}*" -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)
-    
-    if [ -z "$found_dir" ] || [ ! -d "$found_dir" ]; then
-        echo "Error: Could not find results directory matching pattern '$results_dir_pattern'."
-        echo "Looked for: ${results_dir_pattern}*"
-        echo "Skipping Git operations for this run."
+    if [ "$GIT_PUSH_ENABLED" != "true" ]; then
+        echo "      Git push is disabled. Skipping."
         return
     fi
-    
-    RESULTS_DIR_TO_ADD=$(basename "$found_dir")
 
-    echo "Found results directory: $RESULTS_DIR_TO_ADD"
-
-    echo "Adding results to Git..."
-    git add "$RESULTS_DIR_TO_ADD"
-    
-    echo "Committing results..."
-    git commit -m "$commit_message"
-    
-    echo "Pushing to remote '$GIT_REMOTE_NAME' branch '$GIT_BRANCH_NAME'..."
-    git push "$GIT_REMOTE_NAME" "$GIT_BRANCH_NAME"
-    
-    if [ $? -eq 0 ]; then
-        echo "Git push successful."
-    else
-        echo "Error: Git push failed."
-        # Consider adding 'exit 1' here if a failed push should stop all experiments
+    if [ ! -d ".git" ]; then
+        echo "      WARNING: Not a Git repository. Cannot push results."
+        return
     fi
-    sleep 2 # Small delay
+
+    if [ ! -d "$results_dir" ]; then
+        echo "      WARNING: Results directory '$results_dir' not found. Cannot push."
+        return
+    fi
+
+    echo "      Attempting to push results for: $results_dir"
+    
+    git add "$results_dir"
+    if git commit -m "$commit_message"; then
+        echo "      Successfully committed: $commit_message"
+        if git push "$GIT_REMOTE_NAME" "$GIT_BRANCH_NAME"; then
+            echo "      Successfully pushed to $GIT_REMOTE_NAME $GIT_BRANCH_NAME."
+        else
+            echo "      ERROR: Failed to push to GitHub. Please check your Git remote and authentication."
+        fi
+    else
+        echo "      WARNING: Git commit failed. Nothing to commit or other error for '$results_dir'."
+        echo "      This might happen if the results directory was empty or unchanged."
+    fi
 }
 
 
 # --- Main Experiment Loop ---
+echo "Starting OGP-NP Continual Learning Experiments for MNIST Variants..."
+echo "Python script: $PYTHON_SCRIPT_NAME"
+echo "Git Push Enabled: $GIT_PUSH_ENABLED (Remote: $GIT_REMOTE_NAME, Branch: $GIT_BRANCH_NAME)"
+echo "==================================================================="
+
+# Loop through each experiment type
 for EXP_TYPE in "${EXPERIMENT_TYPES[@]}"; do
-    echo "================================================================="
-    echo "Starting Experiment Type: $EXP_TYPE"
-    echo "================================================================="
+    echo ""
+    echo "----------------------------------------------------"
+    echo "EXPERIMENT TYPE: $EXP_TYPE"
+    echo "----------------------------------------------------"
 
-    NUM_CL_TASKS=0
-    if [ "$EXP_TYPE" == "PermutedMNIST" ]; then
-        NUM_CL_TASKS=10
-    elif [ "$EXP_TYPE" == "SplitMNIST" ]; then
-        NUM_CL_TASKS=5 # Based on fixed 2 classes per split in Python Config
-    elif [ "$EXP_TYPE" == "RotatedMNIST" ]; then
-        NUM_CL_TASKS=10
-    else
-        echo "Unknown experiment type: $EXP_TYPE. Skipping."
-        continue
-    fi
-    echo "Derived number of tasks for $EXP_TYPE: $NUM_CL_TASKS"
+    # Loop through each seed
+    for SEED_VAL in "${SEEDS[@]}"; do
+        echo ""
+        echo "  SEED: $SEED_VAL"
+        echo "  ----------------------------------"
 
-    for EPOCHS_CURRENT_RUN in "${EPOCHS_PER_TASK_VALUES[@]}"; do
-        echo "-----------------------------------------------------"
-        echo "Running with Epochs Per Task: $EPOCHS_CURRENT_RUN"
-        echo "-----------------------------------------------------"
+        # Loop through each epoch option
+        for EPOCHS in "${EPOCHS_PER_TASK_OPTIONS[@]}"; do
+            echo ""
+            echo "    EPOCHS PER TASK: $EPOCHS"
+            echo "    .............................."
 
-        for SEED in "${SEEDS[@]}"; do
-            echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
-            echo "Running for Seed: $SEED"
-            echo "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~"
+            # Strategy 1: Fixed head per task
+            echo ""
+            echo "      Strategy: Fixed head per task"
+            CMD="python \"$PYTHON_SCRIPT_NAME\" \
+                --experiment_type \"$EXP_TYPE\" \
+                --num_tasks \"$DEFAULT_NUM_TASKS\" \
+                --epochs_per_task \"$EPOCHS\" \
+                --seed \"$SEED_VAL\" \
+                --fixed_head_per_task"
+            echo "      Running: $CMD"
+            eval "$CMD" 
+            
+            RESULTS_DIR_FIXED=$(construct_results_dir_name "$EXP_TYPE" "$SEED_VAL" "$EPOCHS" "FixedHead")
+            COMMIT_MSG_FIXED="Results: $EXP_TYPE, Seed $SEED_VAL, Epochs $EPOCHS, Fixed Heads"
+            push_results_to_github "$RESULTS_DIR_FIXED" "$COMMIT_MSG_FIXED"
+            
+            echo "      Finished fixed head strategy for $EXP_TYPE, Seed $SEED_VAL, Epochs $EPOCHS."
+            echo "      .............................."
 
-            # --- Run: Fixed Head Per Task ---
-            MODE_STR="FixedHead" # Only this mode now
-            echo "Running $EXP_TYPE with $MODE_STR (Seed: $SEED, Tasks: $NUM_CL_TASKS, Epochs: $EPOCHS_CURRENT_RUN)"
-            
-            python "$PYTHON_SCRIPT_NAME" \
-                --experiment_type "$EXP_TYPE" \
-                --num_tasks "$NUM_CL_TASKS" \
-                --epochs_per_task "$EPOCHS_CURRENT_RUN" \
-                --seed "$SEED" \
-                --fixed_head_per_task 
-            
-            echo "$MODE_STR run finished for Seed $SEED, Epochs $EPOCHS_CURRENT_RUN."
-            
-            COMMIT_MSG="Results: $EXP_TYPE $MODE_STR, $NUM_CL_TASKS tasks, $EPOCHS_CURRENT_RUN EPT, Seed $SEED"
-            
-            # *** MODIFIED RESULTS_PATTERN to include epochs ***
-            RESULTS_PATTERN="results_OGP-NP_${EXP_TYPE}_${MODE_STR}_${NUM_CL_TASKS}tasks_seed${SEED}_${EPOCHS_CURRENT_RUN}epochs"
-            
-            perform_git_operations "$RESULTS_PATTERN" "$COMMIT_MSG"
-            echo "----------------------------------------"
-        done # End SEED loop
-    done # End EPOCHS_CURRENT_RUN loop
-    echo "Finished all runs for Experiment Type: $EXP_TYPE"
-done # End EXP_TYPE loop
 
-echo "================================================================="
-echo "All experiments completed."
-echo "================================================================="
+            # Strategy 2: Dynamic head allocation with different thresholds
+            for THRESHOLD_VAL in "${THRESHOLDS_FOR_DYNAMIC[@]}"; do
+                echo ""
+                echo "      Strategy: Dynamic head allocation"
+                echo "      THRESHOLD: $THRESHOLD_VAL"
+                CMD="python \"$PYTHON_SCRIPT_NAME\" \
+                    --experiment_type \"$EXP_TYPE\" \
+                    --num_tasks \"$DEFAULT_NUM_TASKS\" \
+                    --epochs_per_task \"$EPOCHS\" \
+                    --seed \"$SEED_VAL\" \
+                    --threshold \"$THRESHOLD_VAL\""
+                echo "      Running: $CMD"
+                eval "$CMD"
+
+                RESULTS_DIR_DYNAMIC=$(construct_results_dir_name "$EXP_TYPE" "$SEED_VAL" "$EPOCHS" "DynamicHead" "$THRESHOLD_VAL")
+                COMMIT_MSG_DYNAMIC="Results: $EXP_TYPE, Seed $SEED_VAL, Epochs $EPOCHS, Dynamic Heads (Thresh: $THRESHOLD_VAL)"
+                push_results_to_github "$RESULTS_DIR_DYNAMIC" "$COMMIT_MSG_DYNAMIC"
+
+                echo "      Finished dynamic head (threshold $THRESHOLD_VAL) for $EXP_TYPE, Seed $SEED_VAL, Epochs $EPOCHS."
+                echo "      .............................."
+            done # End of thresholds loop
+        done # End of epochs loop
+    done # End of seeds loop
+done # End of experiment types loop
+
+echo ""
+echo "==================================================================="
+echo "All specified MNIST experiments completed."
+echo "==================================================================="
