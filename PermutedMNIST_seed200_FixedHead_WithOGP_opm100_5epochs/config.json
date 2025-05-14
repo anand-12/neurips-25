@@ -1,0 +1,16 @@
+{
+    "SEED": 200,
+    "NUM_TASKS": 20,
+    "EPOCHS_PER_TASK": 5,
+    "EXPERIMENT_TYPE": "PermutedMNIST",
+    "FIXED_HEAD_PER_TASK": true,
+    "THRESHOLD": 2.0,
+    "DISABLE_OGP": false,
+    "OPM_PROJ_DIM": 100,
+    "DEVICE": "cuda:0",
+    "NUM_CLASSES": 10,
+    "X_DIM": 784,
+    "Y_DIM_ONEHOT": 10,
+    "Y_DIM_OUT": 10,
+    "NUM_CL_TASKS_EFFECTIVE": 20
+}
