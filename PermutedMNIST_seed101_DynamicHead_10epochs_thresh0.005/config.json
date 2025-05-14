@@ -1,0 +1,13 @@
+{
+    "SEED": 101,
+    "NUM_TASKS": 10,
+    "EPOCHS_PER_TASK": 10,
+    "EXPERIMENT_TYPE": "PermutedMNIST",
+    "FIXED_HEAD_PER_TASK": false,
+    "THRESHOLD": 0.005,
+    "DEVICE": "cuda",
+    "X_DIM": 784,
+    "Y_DIM_ONEHOT": 10,
+    "Y_DIM_OUT": 10,
+    "NUM_CL_TASKS_EFFECTIVE": 10
+}
